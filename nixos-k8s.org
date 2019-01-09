@@ -3,7 +3,6 @@
   nix-env -iA nixos.cfssl
 #+END_SRC
 
-
 2. nixos configurations
 #+BEGIN_SRC config 
 environment.systemPackages = with pkgs; [
