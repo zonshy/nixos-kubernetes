@@ -5,7 +5,7 @@
 
 
 2. nixos configurations
-#+BEGIN_SRC config
+#+BEGIN_SRC config 
 environment.systemPackages = with pkgs; [
     emacs tmux curl git ipvsadm certbot easyrsa kubernetes
   ];
@@ -51,6 +51,8 @@ boot.kernelModules = ["ip_vs" "ip_vs_rr" "ip_vs_wrr" "ip_vs_wrr" "nf_conntrack_i
     apiserver.kubeletClientKeyFile = "/etc/kubernetes/pki/k8s/admin-key.pem";
     apiserver.kubeletHttps = true;
     apiserver.authorizationMode = ["AlwaysAllow"];
+    apiserver.serviceClusterIpRange = "198.14.0.0/24";
+    clusterCidr = "192.168.0.0/16";
     #apiserver.disableAdmissionPlugins = ["NodeRestriction"];
     #apiserver.enableAdmissionPlugins = [ "NamespaceLifecycle" "LimitRanger" "ServiceAccount" "ResourceQuota" "DefaultStorageClass" "DefaultTolerationSeconds" ];
 
@@ -273,7 +275,7 @@ cat > kube-proxy-csr.json <<ABC
     "algo":"rsa",
     "size":2048
   },
-  "names":[
+"names":[
     {
       "C":"CN",
       "ST":"BeiJing",
@@ -335,58 +337,6 @@ cat > kube-scheduler-csr.json <<ABC
   ]
 }
 ABC
-
-cat > kubernetes-csr.json <<ABC
-{
-  "CN":"kubernetes",
-  "hosts":[
-    "127.0.0.1",
-    "10.0.0.1",
-    "10.254.0.1",
-    "10.170.0.4",
-    "localhost",
-    "kubernetes",
-    "kubernetes.default",
-    "kubernetes.default.svc",
-    "kubernetes.default.svc.cluster",
-    "kubernetes.default.svc.cluster.local"
-  ],
-  "key":{
-    "algo":"rsa",
-    "size":2048
-  },
-  "names":[
-    {
-      "C":"CN",
-      "ST":"BeiJing",
-      "L":"BeiJing",
-      "O":"k8s",
-      "OU":"System"
-    }
-  ]
-}
-ABC
-
-cat > kube-scheduler-csr.json <<ABC
-{
-  "CN": "system:kube-scheduler",
-  "hosts": [],
-  "key": {
-    "algo": "rsa",
-    "size": 2048
-  },
-  "names": [
-    {
-      "C": "CN",
-      "ST": "BeiJing",
-      "L": "BeiJing",
-      "O": "k8s",
-      "OU": "System"
-    }
-  ]
-}
-ABC
-#+END_SRC
 
 #+BEGIN_SRC shell
 cfssl gencert --initca=true k8s-root-ca-csr.json | cfssljson --bare k8s-root-ca
@@ -417,22 +367,16 @@ setfacl -m u:kubernetes:r /etc/kubernetes/pki/etcd/etcd-key.pem
 
 #+END_SRC
 
-#+BEGIN_SRC shell
-export BOOTSTRAP_TOKEN=$(head -c 16 /dev/urandom | od -An -t x | tr -d ' ')
-cat > token.csv <<EOF
-${BOOTSTRAP_TOKEN},kubelet-bootstrap,10001,"system:kubelet-bootstrap"
-EOF
-#+END_SRC
 
-4. switch configuration and active new
-#+BEGIN_SRC
+4. switch configuration and active new 
+#+BEGIN_SRC 
 nixos-rebuild switch
 #+END_SRC
 
 
 5. k8s-errors
 
-a.
+a. 
 #+BEGIN_QUOTE
   Warning  FailedScheduling  6m59s  default-scheduler  0/1 nodes are available: 1 node(s) had taints that the pod didn't tolerate.
   Normal   Scheduled         2m57s  default-scheduler  Successfully assigned default/nginx-deployment-7db75b8b78-s6knt to ftp
@@ -444,7 +388,7 @@ a.
 -> 0/1 nodes are available: 1 node(s) had taints that the pod didn't tolerate.
 #+END_QUOTE
 
-According the Creating a single master cluster with kubeadm, execute the command
+According the Creating a single master cluster with kubeadm, execute the command 
 #+BEGIN_SRC shell
 kubectl taint nodes --all node-role.kubernetes.io/master-
 #+END_SRC
@@ -453,4 +397,32 @@ kubectl taint nodes --all node-role.kubernetes.io/master-
 b. ROLES is be seted '<none>'
 #+BEGIN_SRC shell
 kubectl label node pike node-role.kubernetes.io/master=
+#+END_SRC
+
+
+c. kube-dns crashes because it can't access Kubernetes API
+#+BEGIN_VERSE
+services.kubernetes.clusterCidr = "192.168.0.0/16";
+#+END_VERSE
+
+d. Jan 09 08:54:10 phy15 kube-apiserver[12792]: E0109 08:54:10.512950   12792 authentication.go:62] Unable to authenticate the request due to an error: [invalid bearer token, [invalid bearer token, square/go-jose: error in cryptographic primitive]]
+#+BEGIN_SRC 
+kubectl --namespace=kube-system delete secrets default-token-czmz6
+#+END_SRC
+and it will be show
+#+BEGIN_VERSE
+[root@phy15:~]# kubectl --namespace=kube-system get pods
+NAME                        READY     STATUS    RESTARTS   AGE
+kube-dns-7689ffc6b8-h72mg   3/3       Running   0          1m
+#+END_VERSE
+
+6. Generate .kube/config
+#+BEGIN_SRC shell
+kubectl config set-cluster kubernetes --server=https://127.0.0.1:8443 --certificate-authority=/etc/kubernetes/pki/k8s/k8s-root-ca.pem --embed-certs=true  --kubeconfig=.kube/config
+
+kubectl config set-credentials kubernetes-admin --token=3dc1c6b2ee5866c82275ad65785f90b2 --client-certificate=/etc/kubernetes/pki/k8s/admin.pem --client-key=/etc/kubernetes/pki/k8s/admin-key.pem --embed-certs=true --kubeconfig=.kube/config
+
+kubectl config set-context kubernetes-admin@kubernetes --cluster=kubernetes --user=kubernetes-admin --kubeconfig=.kube/config
+
+kubectl config use-context default --kubeconfig=.kube/config
 #+END_SRC
